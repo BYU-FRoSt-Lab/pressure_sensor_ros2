@@ -1,22 +1,32 @@
+#!/usr/bin/python3
 import time
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import FluidPressure
-from . import ms5837
+# from . import ms5837
+from pressure_sensor import ms5837
 
 class PressurePublisher(Node):
-    def __init__(self, sensor_model, node_name, bus, frame_id):
-        super().__init__(node_name)
-        self.declare_parameter('sensor_type', sensor_model)
+    def __init__(self):
+        super().__init__('pressure_pub')
+        
+        self.declare_parameter('sensor_type', 0)
         sensor_type = self.get_parameter('sensor_type').get_parameter_value().integer_value
+
+
+        self.declare_parameter('i2c_bus', 1)
+        i2c_bus = self.get_parameter('i2c_bus').get_parameter_value().integer_value
+
+        self.declare_parameter('frame_id', 'pressure_link')
+        self.frame_id = self.get_parameter('frame_id').get_parameter_value().string_value
 
         self.publisher_ = self.create_publisher(FluidPressure, 'pressure/data', 10)
 
         if sensor_type == 0:
-            self.sensor = ms5837.MS5837_02BA(bus=bus)
+            self.sensor = ms5837.MS5837_02BA(bus=i2c_bus)
             self.get_logger().info("Using MS5837_02BA sensor (shallow)")
         else:
-            self.sensor = ms5837.MS5837_30BA(bus=bus)
+            self.sensor = ms5837.MS5837_30BA(bus=i2c_bus)
             self.get_logger().info("Using MS5837_30BA sensor (deep)")
 
         if not self.sensor.init():
@@ -24,7 +34,6 @@ class PressurePublisher(Node):
             return
 
         self.timer = self.create_timer(0.1, self.timer_callback)  # 10 Hz
-        self.frame_id = frame_id
 
     def timer_callback(self):
         if self.sensor.read():
@@ -41,28 +50,19 @@ class PressurePublisher(Node):
             self.get_logger().error("Sensor read failed!")
             rclpy.shutdown()
 
-def main():
-    rclpy.init()
-    node = None
-    node2 = None
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = PressurePublisher()
     try:
-        node = PressurePublisher(0, 'pressure_publisher_02ba', 1, "shallow_pressure")
-        node2 = PressurePublisher(1, 'pressure_publisher_30ba', 0, "deep_pressure")
-        if node is None or node2 is None:
-            rclpy.shutdown()
-            return
-        executor = rclpy.executors.MultiThreadedExecutor()
-        executor.add_node(node)
-        executor.add_node(node2)
-        executor.spin()
+        rclpy.spin(node)
     except KeyboardInterrupt:
-        pass
+        node.get_logger().info('Keyboard interrupt, shutting down.')
     finally:
-        if node is not None:
+        if rclpy.ok():
             node.destroy_node()
-        if node2 is not None:
-            node2.destroy_node()
-        rclpy.shutdown()
+            rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()

@@ -21,45 +21,30 @@ class DepthConverter(Node):
         # -------------------------------
         # Parameters
         # -------------------------------
-        # Either set fluid_density directly OR leave it unset and compute
-        # density from salinity using the simple linear model.
         self.declare_parameter('fluid_density', 997.0)          # kg/m^3
         self.declare_parameter('water_salinity_ppt', 0.0)       # ppt
         self.declare_parameter('use_salinity_model', False)     # bool
 
         self.declare_parameter('fluid_pressure_atm', 87250.0)   # Pa
-        self.declare_parameter('calibration_samples', 20)
-        self.declare_parameter('calibration_timeout_s', 5.0)
+        self.declare_parameter('calibration_samples', 100)       # min number of samples for calibration
+        self.declare_parameter('calibration_timeout_s', 10.0)   # maximum calibration time in seconds
+        self.declare_parameter('calibration_max_variance', 100.0)  # Pa^2
+        self.declare_parameter('calibration_max_offset', 40000.0)  # Pa
 
-        self.average_pressure = self.get_parameter(
-            'fluid_pressure_atm').value
+        self.average_pressure = self.get_parameter('fluid_pressure_atm').value
 
         # -------------------------------
         # ROS interfaces
         # -------------------------------
-        self.depth_pub = self.create_publisher(
-            Odometry,
-            'depth_data',
-            10
-        )
+        self.depth_pub = self.create_publisher(Odometry, 'depth_data', 10)
 
         self.pressure_sub = self.create_subscription(
-            FluidPressure,
-            'pressure/data',
-            self.pressure_callback,
-            qos_profile_sensor_data
+            FluidPressure, 'pressure/data', self.pressure_callback, qos_profile_sensor_data
         )
 
-        self.calibrate_srv = self.create_service(
-            Trigger,
-            'calibrate_depth',
-            self.handle_calibration_request
-        )
+        self.calibrate_srv = self.create_service(Trigger, 'calibrate_depth', self.handle_calibration_request)
 
-        self.calibration_timer = self.create_timer(
-            0.5,
-            self.calibration_timer_callback
-        )
+        self.calibration_timer = self.create_timer(0.5, self.calibration_timer_callback)
         self.calibration_timer.cancel()
 
         # -------------------------------
@@ -78,10 +63,7 @@ class DepthConverter(Node):
 
     def pressure_callback(self, msg: FluidPressure):
         density = self.get_fluid_density()
-
-        depth = (self.average_pressure - msg.fluid_pressure) / (
-            density * GRAVITY
-        )
+        depth = (self.average_pressure - msg.fluid_pressure) / (density * GRAVITY)
 
         depth_msg = Odometry()
         depth_msg.header.stamp = msg.header.stamp
@@ -102,13 +84,9 @@ class DepthConverter(Node):
         if not self.calibrating:
             return
 
-        elapsed = (self.get_clock().now() -
-                   self.calibration_start_time).nanoseconds * 1e-9
-
-        max_samples = self.get_parameter(
-            'calibration_samples').value
-        timeout = self.get_parameter(
-            'calibration_timeout_s').value
+        elapsed = (self.get_clock().now() - self.calibration_start_time).nanoseconds * 1e-9
+        max_samples = self.get_parameter('calibration_samples').value
+        timeout = self.get_parameter('calibration_timeout_s').value
 
         if len(self.pressure_samples) >= max_samples or elapsed >= timeout:
             self.finish_calibration()
@@ -140,43 +118,32 @@ class DepthConverter(Node):
         self.calibrating = False
 
         if len(self.pressure_samples) < 5:
-            self.get_logger().warn(
-                'Calibration failed: insufficient samples'
-            )
+            self.get_logger().warn('Calibration failed: insufficient samples')
             return
 
         samples = np.array(self.pressure_samples)
         mean_pressure = float(np.mean(samples))
         variance = float(np.var(samples))
 
-        if variance > 100.0:  # Pa^2
-            self.get_logger().warn(
-                f'Calibration failed: high variance ({variance:.2f} Pa^2)'
-            )
+        max_variance = self.get_parameter('calibration_max_variance').value
+        max_offset = self.get_parameter('calibration_max_offset').value
+
+        if variance > max_variance:
+            self.get_logger().warn(f'Calibration failed: high variance ({variance:.2f} Pa^2)')
             return
-        
-        if abs(mean_pressure - self.average_pressure) > 40000.0:  # 
-            self.get_logger().warn(
-                'Calibration failed: mean pressure change too large'
-            )
+
+        if abs(mean_pressure - self.average_pressure) > max_offset:
+            self.get_logger().warn('Calibration failed: mean pressure change too large')
             return
 
         old_pressure = self.average_pressure
         self.average_pressure = mean_pressure
 
         self.set_parameters([
-            rclpy.parameter.Parameter(
-                'fluid_pressure_atm',
-                rclpy.parameter.Parameter.Type.DOUBLE,
-                mean_pressure
-            )
+            rclpy.parameter.Parameter('fluid_pressure_atm', rclpy.parameter.Parameter.Type.DOUBLE, mean_pressure)
         ])
 
-        self.get_logger().info(
-            f'Calibration complete | '
-            f'offset={mean_pressure - old_pressure:.2f} Pa | '
-            f'variance={variance:.2f} Pa^2'
-        )
+        self.get_logger().info(f'Calibration complete | offset={mean_pressure - old_pressure:.2f} Pa | variance={variance:.2f} Pa^2')
 
 
 def main():

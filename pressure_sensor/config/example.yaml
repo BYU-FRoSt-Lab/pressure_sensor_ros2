@@ -1,0 +1,10 @@
+depth_converter:
+  ros__parameters:
+    fluid_density: 1025.0
+    use_salinity_model: false
+    water_salinity_ppt: 35.0
+    fluid_pressure_atm: 87250.0
+    calibration_samples: 100
+    calibration_timeout_s: 10.0
+    calibration_max_variance: 100.0
+    calibration_max_offset: 40000.0

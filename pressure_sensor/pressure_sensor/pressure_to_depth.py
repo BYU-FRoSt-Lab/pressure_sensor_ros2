@@ -26,12 +26,16 @@ class DepthConverter(Node):
         self.declare_parameter('use_salinity_model', False)     # bool
 
         self.declare_parameter('fluid_pressure_atm', 87250.0)   # Pa
-        self.declare_parameter('calibration_samples', 100)       # min number of samples for calibration
+        self.declare_parameter('min_calibration_samples', 20)     # minimum samples required before calibration may succeed
         self.declare_parameter('calibration_timeout_s', 10.0)   # maximum calibration time in seconds
         self.declare_parameter('calibration_max_variance', 100.0)  # Pa^2
-        self.declare_parameter('calibration_max_offset', 40000.0)  # Pa
+        self.declare_parameter('calibration_max_offset', 40000.0)  # Pa  # Pa
+        self.declare_parameter('default_depth_variance', 1.0)   # m^2
+        self.declare_parameter('use_calibration_variance', True)
+        self.declare_parameter('calibrate_on_startup', True)
 
         self.average_pressure = self.get_parameter('fluid_pressure_atm').value
+        self.depth_variance = self.get_parameter('default_depth_variance').value
 
         # -------------------------------
         # ROS interfaces
@@ -55,7 +59,8 @@ class DepthConverter(Node):
         self.calibration_start_time = None
 
         # Optional: auto-calibrate on startup
-        self.start_calibration()
+        if self.get_parameter('calibrate_on_startup').value:
+            self.start_calibration()
 
     # -------------------------------
     # Callbacks
@@ -68,6 +73,7 @@ class DepthConverter(Node):
         depth_msg = Odometry()
         depth_msg.header.stamp = msg.header.stamp
         depth_msg.pose.pose.position.z = depth
+        depth_msg.pose.covariance[14] = self.depth_variance
 
         self.depth_pub.publish(depth_msg)
 
@@ -85,10 +91,10 @@ class DepthConverter(Node):
             return
 
         elapsed = (self.get_clock().now() - self.calibration_start_time).nanoseconds * 1e-9
-        max_samples = self.get_parameter('calibration_samples').value
+        min_samples = self.get_parameter('min_calibration_samples').value
         timeout = self.get_parameter('calibration_timeout_s').value
 
-        if len(self.pressure_samples) >= max_samples or elapsed >= timeout:
+        if elapsed >= timeout:
             self.finish_calibration()
 
     # -------------------------------
@@ -117,7 +123,12 @@ class DepthConverter(Node):
         self.calibration_timer.cancel()
         self.calibrating = False
 
-        if len(self.pressure_samples) < 5:
+        min_samples = self.get_parameter('min_calibration_samples').value
+        if len(self.pressure_samples) < min_samples:
+            self.get_logger().warn(
+                f'Calibration failed: only {len(self.pressure_samples)} samples collected, '
+                f'minimum required is {min_samples} within timeout'
+            )
             self.get_logger().warn('Calibration failed: insufficient samples')
             return
 
@@ -143,7 +154,21 @@ class DepthConverter(Node):
             rclpy.parameter.Parameter('fluid_pressure_atm', rclpy.parameter.Parameter.Type.DOUBLE, mean_pressure)
         ])
 
-        self.get_logger().info(f'Calibration complete | offset={mean_pressure - old_pressure:.2f} Pa | variance={variance:.2f} Pa^2')
+        # Setting variance from calibration values
+        if self.get_parameter('use_calibration_variance').value:
+            density = self.get_fluid_density()
+            self.depth_variance = variance / (density * GRAVITY) ** 2
+        
+            self.get_logger().info(
+                f'Depth variance updated from calibration: '
+                f'{self.depth_variance:.6f} m^2'
+            )
+
+        self.get_logger().info(
+            f'Calibration complete using {len(self.pressure_samples)} samples | '
+            f'offset={mean_pressure - old_pressure:.2f} Pa | variance={variance:.2f} Pa^2'
+        )
+      
 
 
 def main():

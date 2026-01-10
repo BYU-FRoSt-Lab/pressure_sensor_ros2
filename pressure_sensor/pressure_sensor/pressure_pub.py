@@ -20,9 +20,17 @@ class PressurePublisher(Node):
 
         self.publisher_ = self.create_publisher(FluidPressure, 'pressure/data', 10)
 
+        self._last_pressure_pa = None
+
         self._init_sensor()
 
-        self.timer = self.create_timer(0.1, self.timer_callback)  # 10 Hz
+        self.declare_parameter('publish_frequency', 10.0)
+        freq = self.get_parameter('publish_frequency').get_parameter_value().double_value
+        freq = max(min(freq, 20.0), 0.1) # Limit frequency to between 0.1 Hz and 20 Hz
+        period = 1.0 / freq
+        self.get_logger().info(f"Publishing pressure data at {1/period} Hz (period: {period} s)")
+
+        self.timer = self.create_timer(period, self.timer_callback)
 
     def _init_sensor(self):
         """Initialize the sensor, retry on failure."""
@@ -52,6 +60,12 @@ class PressurePublisher(Node):
                 msg.header.frame_id = self.frame_id
                 msg.fluid_pressure = pressure_pa
                 msg.variance = 0.0
+                if self._last_pressure_pa is not None and pressure_pa == self._last_pressure_pa:
+                    self.get_logger().debug("Pressure value identical to previous reading; skipping publish")
+                    self.get_logger().debug("Is the freqeuency too high or is the sensor frozen?")
+                    return
+
+                self._last_pressure_pa = pressure_pa
                 self.publisher_.publish(msg)
             else:
                 self.get_logger().warn("Sensor read returned False, reinitializing sensor")

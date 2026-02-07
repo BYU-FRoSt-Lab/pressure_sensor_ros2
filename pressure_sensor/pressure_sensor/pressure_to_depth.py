@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+# TODO gunna run into a problem if the node needs to be restarted while in the water
+
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
@@ -72,6 +74,8 @@ class DepthConverter(Node):
 
         depth_msg = Odometry()
         depth_msg.header.stamp = msg.header.stamp
+        depth_msg.header.frame_id = 'map'
+        depth_msg.child_frame_id = msg.header.frame_id
         depth_msg.pose.pose.position.z = depth
         depth_msg.pose.covariance[14] = self.depth_variance
 
